@@ -68,6 +68,7 @@ typedef struct {
     } value;
 } lex_t;
 
+//lex->saved_text.value
 #define stream_to_lex(stream) container_of(stream, lex_t, stream)
 
 
@@ -598,7 +599,7 @@ static int lex_scan(lex_t *lex, json_error_t *error)
 
     strbuffer_clear(&lex->saved_text);
 
-    if(lex->token == TOKEN_STRING) {
+    if(lex->token == TOKEN_STRING || lex->token == TOKEN_NAME) {
         jsonp_free(lex->value.string);
         lex->value.string = NULL;
     }
