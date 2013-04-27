@@ -9,6 +9,29 @@
 #include <string.h>
 #include "util.h"
 
+static int encode_null_callback(const char *buffer, size_t size, void *data)
+{
+    (void)buffer;
+    (void)size;
+    (void)data;
+    return 0;
+}
+
+static void encode_null()
+{
+    if(json_dumps(NULL, JSON_ENCODE_ANY) != NULL)
+        fail("json_dumps didn't fail for NULL");
+
+    if(json_dumpf(NULL, stderr, JSON_ENCODE_ANY) != -1)
+        fail("json_dumpf didn't fail for NULL");
+
+    /* Don't test json_dump_file to avoid creating a file */
+
+    if(json_dump_callback(NULL, encode_null_callback, NULL, JSON_ENCODE_ANY) != -1)
+        fail("json_dump_callback didn't fail for NULL");
+}
+
+
 static void encode_twice()
 {
     /* Encode an empty object/array, add an item, encode again */
@@ -159,6 +182,7 @@ static void escape_slashes()
 
 static void run_tests()
 {
+    encode_null();
     encode_twice();
     circular_references();
     encode_other_than_array_or_object();

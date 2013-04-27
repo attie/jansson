@@ -5,7 +5,10 @@
  * it under the terms of the MIT license. See LICENSE for details.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -449,14 +452,16 @@ out:
     jsonp_free(lex->value.string);
 }
 
+#ifndef JANSSON_USING_CMAKE /* disabled if using cmake */
 #if JSON_INTEGER_IS_LONG_LONG
-#ifdef _MSC_VER // Microsoft Visual Studio
+#ifdef _MSC_VER  /* Microsoft Visual Studio */
 #define json_strtoint     _strtoi64
 #else
 #define json_strtoint     strtoll
 #endif
 #else
 #define json_strtoint     strtol
+#endif
 #endif
 
 static int lex_scan_number(lex_t *lex, int c, json_error_t *error)
