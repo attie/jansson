@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2012 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -256,9 +256,18 @@ static void lex_unget(lex_t *lex, int c)
 static void lex_unget_unsave(lex_t *lex, int c)
 {
     if(c != STREAM_STATE_EOF && c != STREAM_STATE_ERROR) {
+        /* Since we treat warnings as errors, when assertions are turned
+         * off the "d" variable would be set but never used. Which is
+         * treated as an error by GCC.
+         */
+        #ifndef NDEBUG
         char d;
+        #endif
         stream_unget(&lex->stream, c);
-        d = strbuffer_pop(&lex->saved_text);
+        #ifndef NDEBUG
+        d = 
+        #endif
+            strbuffer_pop(&lex->saved_text);
         assert(c == d);
     }
 }
@@ -828,6 +837,7 @@ error:
 static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error)
 {
     json_t *json;
+    double value;
 
     switch(lex->token) {
         case TOKEN_STRING: {
@@ -836,7 +846,15 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error)
         }
 
         case TOKEN_INTEGER: {
-            json = json_integer(lex->value.integer);
+            if (flags & JSON_DECODE_INT_AS_REAL) {
+                if(jsonp_strtod(&lex->saved_text, &value)) {
+                    error_set(error, lex, "real number overflow");
+                    return NULL;
+                }
+                json = json_real(value);
+            } else {
+                json = json_integer(lex->value.integer);
+            }
             break;
         }
 

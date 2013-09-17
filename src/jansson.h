@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2012 Petri Lehtinen <petri@digip.org>
+ * Copyright (c) 2009-2013 Petri Lehtinen <petri@digip.org>
  *
  * Jansson is free software; you can redistribute it and/or modify
  * it under the terms of the MIT license. See LICENSE for details.
@@ -150,6 +150,11 @@ int json_object_iter_set_new(json_t *object, void *iter, json_t *value);
         key && (value = json_object_iter_value(json_object_key_to_iter(key))); \
         key = json_object_iter_key(json_object_iter_next(object, json_object_key_to_iter(key))))
 
+#define json_array_foreach(array, index, value) \
+	for(index = 0; \
+		index < json_array_size(array) && (value = json_array_get(array, index)); \
+		index++)
+
 static JSON_INLINE
 int json_object_set(json_t *object, const char *key, json_t *value)
 {
@@ -178,9 +183,9 @@ int json_array_clear(json_t *array);
 int json_array_extend(json_t *array, json_t *other);
 
 static JSON_INLINE
-int json_array_set(json_t *array, size_t index, json_t *value)
+int json_array_set(json_t *array, size_t ind, json_t *value)
 {
-    return json_array_set_new(array, index, json_incref(value));
+    return json_array_set_new(array, ind, json_incref(value));
 }
 
 static JSON_INLINE
@@ -190,9 +195,9 @@ int json_array_append(json_t *array, json_t *value)
 }
 
 static JSON_INLINE
-int json_array_insert(json_t *array, size_t index, json_t *value)
+int json_array_insert(json_t *array, size_t ind, json_t *value)
 {
-    return json_array_insert_new(array, index, json_incref(value));
+    return json_array_insert_new(array, ind, json_incref(value));
 }
 
 const char *json_string_value(const json_t *string);
@@ -228,14 +233,15 @@ int json_equal(json_t *value1, json_t *value2);
 /* copying */
 
 json_t *json_copy(json_t *value);
-json_t *json_deep_copy(json_t *value);
+json_t *json_deep_copy(const json_t *value);
 
 
 /* decoding */
 
-#define JSON_REJECT_DUPLICATES 0x1
-#define JSON_DISABLE_EOF_CHECK 0x2
-#define JSON_DECODE_ANY        0x4
+#define JSON_REJECT_DUPLICATES  0x1
+#define JSON_DISABLE_EOF_CHECK  0x2
+#define JSON_DECODE_ANY         0x4
+#define JSON_DECODE_INT_AS_REAL 0x8
 
 typedef size_t (*json_load_callback_t)(void *buffer, size_t buflen, void *data);
 
