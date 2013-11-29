@@ -294,8 +294,9 @@ String
 Jansson uses UTF-8 as the character encoding. All JSON strings must be
 valid UTF-8 (or ASCII, as it's a subset of UTF-8). Normal null
 terminated C strings are used, so JSON strings may not contain
-embedded null characters. All other Unicode codepoints U+0001 through
-U+10FFFF are allowed.
+embedded null characters. All other Unicode codepoints U+0000 through
+U+10FFFF are allowed, but you must use length-aware functions if you
+wish to embed NUL bytes in strings.
 
 .. function:: json_t *json_string(const char *value)
 
@@ -304,6 +305,13 @@ U+10FFFF are allowed.
    Returns a new JSON string, or *NULL* on error. *value* must be a
    valid UTF-8 encoded Unicode string.
 
+.. function:: json_t *json_stringn(const char *value, size_t len)
+
+   .. refcounting:: new
+
+   Like :func:`json_string`, but with explicit length, so *value* may
+   contain null characters or not be null terminated.
+
 .. function:: json_t *json_string_nocheck(const char *value)
 
    .. refcounting:: new
@@ -311,6 +319,13 @@ U+10FFFF are allowed.
    Like :func:`json_string`, but doesn't check that *value* is valid
    UTF-8. Use this function only if you are certain that this really
    is the case (e.g. you have already checked it by other means).
+
+.. function:: json_t *json_stringn_nocheck(const char *value, size_t len)
+
+   .. refcounting:: new
+
+   Like :func:`json_string_nocheck`, but with explicit length, so
+   *value* may contain null characters or not be null terminated.
 
 .. function:: const char *json_string_value(const json_t *string)
 
@@ -321,11 +336,21 @@ U+10FFFF are allowed.
    the user. It is valid as long as *string* exists, i.e. as long as
    its reference count has not dropped to zero.
 
+.. function:: size_t json_string_length(const json_t *string)
+
+   Returns the length of *string* in its UTF-8 presentation, or zero
+   if *string* is not a JSON string.
+
 .. function:: int json_string_set(const json_t *string, const char *value)
 
    Sets the associated value of *string* to *value*. *value* must be a
    valid UTF-8 encoded Unicode string. Returns 0 on success and -1 on
    error.
+
+.. function:: int json_string_setn(json_t *string, const char *value, size_t len)
+
+   Like :func:`json_string_set`, but with explicit length, so *value*
+   may contain null characters or not be null terminated.
 
 .. function:: int json_string_set_nocheck(const json_t *string, const char *value)
 
@@ -333,6 +358,11 @@ U+10FFFF are allowed.
    valid UTF-8. Use this function only if you are certain that this
    really is the case (e.g. you have already checked it by other
    means).
+
+.. function:: int json_string_setn_nocheck(json_t *string, const char *value, size_t len)
+
+   Like :func:`json_string_set_nocheck`, but with explicit length,
+   so *value* may contain null characters or not be null terminated.
 
 
 Number
@@ -510,7 +540,7 @@ in an array.
 
    Iterate over every element of ``array``, running the block
    of code that follows each time with the proper values set to
-   variables ``index`` and ``value``, of types :type:`int` and
+   variables ``index`` and ``value``, of types :type:`size_t` and
    :type:`json_t *` respectively. Example::
 
        /* array is a JSON array */
@@ -538,6 +568,9 @@ Object
 
 A JSON object is a dictionary of key-value pairs, where the key is a
 Unicode string and the value is any JSON value.
+
+Even though NUL bytes are allowed in string values, they are not
+allowed in object keys.
 
 .. function:: json_t *json_object(void)
 
@@ -958,6 +991,19 @@ macros can be ORed together to obtain *flags*.
 
    .. versionadded:: 2.5
 
+``JSON_ALLOW_NUL``
+   Allow ``\u0000`` escape inside string values. This is a safety
+   measure; If you know your input can contain NUL bytes, use this
+   flag. If you don't use this flag, you don't have to worry about NUL
+   bytes inside strings unless you explicitly create themselves by
+   using e.g. :func:`json_stringn()` or ``s#`` format specifier for
+   :func:`json_pack()`.
+
+   Object keys cannot have embedded NUL bytes even if this flag is
+   used.
+
+   .. versionadded:: 2.6
+
 Each function also takes an optional :type:`json_error_t` parameter
 that is filled with error information if decoding fails. It's also
 updated on success; the number of bytes of input read is written to
@@ -1082,13 +1128,29 @@ arguments.
 ``s#`` (string) [const char \*, int]
     Convert a UTF-8 buffer of a given length to a JSON string.
 
+    .. versionadded:: 2.5
+
+``s%`` (string) [const char \*, size_t]
+    Like ``s#`` but the length argument is of type :type:`size_t`.
+
+    .. versionadded:: 2.6
+
 ``+`` [const char \*]
     Like ``s``, but concatenate to the previous string. Only valid
     after ``s``, ``s#``, ``+`` or ``+#``.
 
+    .. versionadded:: 2.5
+
 ``+#`` [const char \*, int]
     Like ``s#``, but concatenate to the previous string. Only valid
     after ``s``, ``s#``, ``+`` or ``+#``.
+
+    .. versionadded:: 2.5
+
+``+%`` (string) [const char \*, size_t]
+    Like ``+#`` but the length argument is of type :type:`size_t`.
+
+    .. versionadded:: 2.6
 
 ``n`` (null)
     Output a JSON null value. No argument is consumed.
@@ -1203,6 +1265,12 @@ type whose address should be passed.
     string. The resulting string is extracted by using
     :func:`json_string_value()` internally, so it exists as long as
     there are still references to the corresponding JSON string.
+
+``s%`` (string) [const char \*, size_t *]
+    Convert a JSON string to a pointer to a NULL terminated UTF-8
+    string and its length.
+
+    .. versionadded:: 2.6
 
 ``n`` (null)
     Expect a JSON null value. Nothing is extracted.
@@ -1470,7 +1538,7 @@ JSON structures by zeroing all memory when freed::
         ptr -= 8;
         size = *((size_t *)ptr);
 
-        guaranteed_memset(ptr, 0, size);
+        guaranteed_memset(ptr, 0, size + 8);
         free(ptr);
     }
 

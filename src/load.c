@@ -65,7 +65,10 @@ typedef struct {
     strbuffer_t saved_text;
     int token;
     union {
-        char *string;
+        struct {
+            char *val;
+            size_t len;
+        } string;
         json_int_t integer;
         double real;
     } value;
@@ -282,6 +285,13 @@ static void lex_save_cached(lex_t *lex)
     }
 }
 
+static void lex_free_string(lex_t *lex)
+{
+    jsonp_free(lex->value.string.val);
+    lex->value.string.val = NULL;
+    lex->value.string.len = 0;
+}
+
 /* assumes that str points to 'u' plus at least 4 valid hex digits */
 static int32_t decode_unicode_escape(const char *str)
 {
@@ -300,7 +310,7 @@ static int32_t decode_unicode_escape(const char *str)
         else if(l_isupper(c))
             value += c - 'A' + 10;
         else
-            assert(0);
+            return -1;
     }
 
     return value;
@@ -313,7 +323,7 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
     char *t;
     int i;
 
-    lex->value.string = NULL;
+    lex->value.string.val = NULL;
     lex->token = TOKEN_INVALID;
 
     c = lex_get_save(lex, error);
@@ -368,14 +378,12 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
          - two \uXXXX escapes (length 12) forming an UTF-16 surrogate pair
            are converted to 4 bytes
     */
-    lex->value.string = jsonp_malloc(lex->saved_text.length + 1);
-    if(!lex->value.string) {
+    t = jsonp_malloc(lex->saved_text.length + 1);
+    if(!t) {
         /* this is not very nice, since TOKEN_INVALID is returned */
         goto out;
     }
-
-    /* the target */
-    t = lex->value.string;
+    lex->value.string.val = t;
 
     /* + 1 to skip the " */
     p = strbuffer_value(&lex->saved_text) + 1;
@@ -384,17 +392,24 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
         if(*p == '\\') {
             p++;
             if(*p == 'u') {
-                char buffer[4];
-                int length;
+                size_t length;
                 int32_t value;
 
                 value = decode_unicode_escape(p);
+                if(value < 0) {
+                    error_set(error, lex, "invalid Unicode escape '%.6s'", p - 1);
+                    goto out;
+                }
                 p += 5;
 
                 if(0xD800 <= value && value <= 0xDBFF) {
                     /* surrogate pair */
                     if(*p == '\\' && *(p + 1) == 'u') {
                         int32_t value2 = decode_unicode_escape(++p);
+                        if(value2 < 0) {
+                            error_set(error, lex, "invalid Unicode escape '%.6s'", p - 1);
+                            goto out;
+                        }
                         p += 5;
 
                         if(0xDC00 <= value2 && value2 <= 0xDFFF) {
@@ -423,16 +438,9 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
                     error_set(error, lex, "invalid Unicode '\\u%04X'", value);
                     goto out;
                 }
-                else if(value == 0)
-                {
-                    error_set(error, lex, "\\u0000 is not allowed");
-                    goto out;
-                }
 
-                if(utf8_encode(value, buffer, &length))
+                if(utf8_encode(value, t, &length))
                     assert(0);
-
-                memcpy(t, buffer, length);
                 t += length;
             }
             else {
@@ -454,11 +462,12 @@ static void lex_scan_string(lex_t *lex, json_error_t *error)
             *(t++) = *(p++);
     }
     *t = '\0';
+    lex->value.string.len = t - lex->value.string.val;
     lex->token = TOKEN_STRING;
     return;
 
 out:
-    jsonp_free(lex->value.string);
+    lex_free_string(lex);
 }
 
 #ifndef JANSSON_USING_CMAKE /* disabled if using cmake */
@@ -614,8 +623,7 @@ static int lex_scan(lex_t *lex, json_error_t *error)
     strbuffer_clear(&lex->saved_text);
 
     if(lex->token == TOKEN_STRING || lex->token == TOKEN_NAME) {
-        jsonp_free(lex->value.string);
-        lex->value.string = NULL;
+        lex_free_string(lex);
     }
 
     c = lex_get(lex, error);
@@ -669,11 +677,12 @@ static int lex_scan(lex_t *lex, json_error_t *error)
         else {
             unsigned int i;
             lex->token = TOKEN_NAME;
-            lex->value.string = jsonp_malloc(lex->saved_text.length + 1);
-            for (i = 0; i < lex->saved_text.length; i++) {
-                lex->value.string[i] = lex->saved_text.value[i];
+            lex->value.string.len = lex->saved_text.length + 1;
+            lex->value.string.val = jsonp_malloc(lex->value.string.len);
+            for (i = 0; i < lex->value.string.len; i++) {
+              lex->value.string.val[i] = lex->saved_text.value[i];
             }
-            lex->value.string[i] = '\0';
+            lex->value.string.val[i] = '\0';
         }
 
     }
@@ -688,13 +697,14 @@ out:
     return lex->token;
 }
 
-static char *lex_steal_name(lex_t *lex)
+static char *lex_steal_string(lex_t *lex, size_t *out_len)
 {
     char *result = NULL;
-    if(lex->token == TOKEN_STRING || lex->token == TOKEN_NAME)
-    {
-        result = lex->value.string;
-        lex->value.string = NULL;
+    if(lex->token == TOKEN_STRING || lex->token == TOKEN_NAME) {
+        result = lex->value.string.val;
+        *out_len = lex->value.string.len;
+        lex->value.string.val = NULL;
+        lex->value.string.len = 0;
     }
     return result;
 }
@@ -712,7 +722,7 @@ static int lex_init(lex_t *lex, get_func get, void *data)
 static void lex_close(lex_t *lex)
 {
     if(lex->token == TOKEN_STRING)
-        jsonp_free(lex->value.string);
+        lex_free_string(lex);
     strbuffer_close(&lex->saved_text);
 }
 
@@ -733,6 +743,7 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error)
 
     while(1) {
         char *key;
+        size_t len;
         json_t *value;
 
         if(lex->token != TOKEN_STRING && lex->token != TOKEN_NAME) {
@@ -740,9 +751,14 @@ static json_t *parse_object(lex_t *lex, size_t flags, json_error_t *error)
             goto error;
         }
 
-        key = lex_steal_name(lex);
+        key = lex_steal_string(lex, &len);
         if(!key)
             return NULL;
+        if (memchr(key, '\0', len)) {
+            jsonp_free(key);
+            error_set(error, lex, "NUL byte in object key not supported");
+            goto error;
+        }
 
         if(flags & JSON_REJECT_DUPLICATES) {
             if(json_object_get(object, key)) {
@@ -841,7 +857,21 @@ static json_t *parse_value(lex_t *lex, size_t flags, json_error_t *error)
 
     switch(lex->token) {
         case TOKEN_STRING: {
-            json = json_string_nocheck(lex->value.string);
+            const char *value = lex->value.string.val;
+            size_t len = lex->value.string.len;
+
+            if(!(flags & JSON_ALLOW_NUL)) {
+                if(memchr(value, '\0', len)) {
+                    error_set(error, lex, "\\u0000 is not allowed without JSON_ALLOW_NUL");
+                    return NULL;
+                }
+            }
+
+            json = jsonp_stringn_nocheck_own(value, len);
+            if(json) {
+                lex->value.string.val = NULL;
+                lex->value.string.len = 0;
+            }
             break;
         }
 
